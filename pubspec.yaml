@@ -1,0 +1,17 @@
+name: "flutter_persistent_bottom_sheet"
+version: "0.1.0"
+description: "Customizable persistent bottom sheets for Flutter. Supports dragging, docking, and more."
+repository: "https://github.com/kszczek/flutter_persistent_bottom_sheet"
+issue_tracker: "https://github.com/kszczek/flutter_persistent_bottom_sheet/issues"
+
+environment:
+  sdk: "^3.5.4"
+  flutter: ">=1.17.0"
+
+dependencies:
+  flutter:
+    sdk: "flutter"
+
+dev_dependencies:
+  flutter_test:
+    sdk: "flutter"
