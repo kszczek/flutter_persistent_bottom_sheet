@@ -144,7 +144,12 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
         duration: Duration.zero,
       );
     }
-    _animationController.value -= details.primaryDelta! / _dragExtent;
+    final double unitDelta = details.primaryDelta! / _dragExtent;
+    if ((_animationController.value == 0.0 && unitDelta > 0.0) ||
+        (_animationController.value == 1.0 && unitDelta < 0.0)) {
+      return;
+    }
+    _animationController.value -= unitDelta;
   }
 
   void _handleDragEnd(final DragEndDetails details) {
