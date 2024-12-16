@@ -3,23 +3,15 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_persistent_bottom_sheet/src/measure_height.dart';
 import 'package:flutter_persistent_bottom_sheet/src/reference.dart';
 
 const double _minFlingVelocity = 700.0;
 const double _closeProgressThreshold = 0.5;
 
-/// Signature for a function that builds a widget given its state.
-typedef StatefulWidgetBuilder = Widget Function(
-  BuildContext context,
-  Set<WidgetState> state,
-);
-
 /// A dockable Material Design bottom sheet.
-class PersistentBottomSheet extends BottomSheet {
+class PersistentBottomSheet extends StatefulWidget {
   /// Creates a persistent bottom sheet.
-  ///
-  /// If no [animationController] is provided, this widget will create and
-  /// manage one internally using [BottomSheet.createAnimationController].
   ///
   /// The [dragHandleColor] and [dragHandleSize] parameters are only used for
   /// the default drag handle, i.e. when [showDragHandle] is `true` and
@@ -30,60 +22,196 @@ class PersistentBottomSheet extends BottomSheet {
   /// [minContentHeight] only constrains the content.
   const PersistentBottomSheet({
     super.key,
-    super.animationController,
-    super.enableDrag = true,
-    super.showDragHandle,
-    super.dragHandleColor,
-    super.dragHandleSize,
-    super.onDragStart,
-    super.onDragEnd,
-    super.backgroundColor,
-    super.shadowColor,
-    super.elevation,
-    super.shape,
-    super.clipBehavior,
-    super.constraints,
-    this.minContentHeight,
+    this.onClosing,
+    this.enableDrag = true,
+    this.showDragHandle,
+    this.dragHandleColor,
+    this.dragHandleSize,
     this.dragHandleBuilder,
-    required super.onClosing,
-    required super.builder,
-  });
+    this.dragHandleHeight,
+    this.onDragStart,
+    this.onDragEnd,
+    this.backgroundColor,
+    this.shadowColor,
+    this.elevation,
+    this.shape,
+    this.clipBehavior,
+    this.constraints,
+    this.minContentHeight,
+    required this.animationController,
+    required this.curve,
+    required this.builder,
+  }) : assert(
+          elevation == null || elevation >= 0.0,
+          'Elevation must not be negative',
+        );
 
-  /// Defines the minimum height (or the height at which the sheet "docks")
-  /// for the [PersistentBottomSheet]'s content, i.e. the widget returned by
-  /// the [builder].
+  /// The animation controller that controls the bottom sheet's entrance and
+  /// exit animations.
+  ///
+  /// The PersistentBottomSheet widget will manipulate the position of this
+  /// animation, it is not just a passive observer.
+  final AnimationController animationController;
+
+  /// The animation curve to use when opening/closing the bottom sheet.
+  final Reference<Curve> curve;
+
+  /// A builder for the contents of the sheet.
+  ///
+  /// The bottom sheet will wrap the widget produced by this builder in a
+  /// [Material] widget.
+  final WidgetBuilder builder;
+
+  /// Called when the bottom sheet begins to close.
+  ///
+  /// A bottom sheet might be prevented from closing (e.g., by user
+  /// interaction) even after this callback is called. For this reason, this
+  /// callback might be call multiple times for a given bottom sheet.
+  final VoidCallback? onClosing;
+
+  /// If true, the bottom sheet can be dragged up and down and dismissed by
+  /// swiping downwards.
+  ///
+  /// If [showDragHandle] is true, this only applies to the content below the
+  /// drag handle, because the drag handle is always draggable.
+  ///
+  /// Default is true.
+  final bool enableDrag;
+
+  /// Specifies whether a drag handle is shown.
+  ///
+  /// The drag handle appears at the top of the bottom sheet.
+  ///
+  /// If null, then the value of [BottomSheetThemeData.showDragHandle] is used.
+  /// If that is also null, defaults to true.
+  final bool? showDragHandle;
+
+  /// The bottom sheet drag handle's color.
+  ///
+  /// Defaults to [BottomSheetThemeData.dragHandleColor].
+  /// If that is also null, defaults to [ColorScheme.onSurfaceVariant].
+  final Color? dragHandleColor;
+
+  /// Defaults to [BottomSheetThemeData.dragHandleSize].
+  /// If that is also null, defaults to Size(32, 4).
+  final Size? dragHandleSize;
+
+  /// A builder for the sheet's drag handle.
+  ///
+  /// Use [DragHandleWidgetState.of] to access current widget state, e.g.
+  /// to change appearance when dragging, hovering, etc.
+  ///
+  /// The bottom sheet will wrap the widget produced by this builder in a
+  /// [Material] widget.
+  final WidgetBuilder? dragHandleBuilder;
+
+  /// Stores the drag handle height, set by the widget at layout time.
+  ///
+  /// If provided, the [PersistentBottomSheet] will use this reference to store
+  /// the height of the drag handle at layout time, so that other widgets in
+  /// neighboring subtrees can size themselves accordingly.
+  final Reference<double?>? dragHandleHeight;
+
+  /// Called when the user begins dragging the bottom sheet vertically, if
+  /// [showDragHandle] or [enableDrag] is true.
+  ///
+  /// Would typically be used to change the bottom sheet animation curve so
+  /// that it tracks the user's finger accurately.
+  final BottomSheetDragStartHandler? onDragStart;
+
+  /// Called when the user stops dragging the bottom sheet, if [showDragHandle]
+  /// or [enableDrag] is true.
+  ///
+  /// Would typically be used to reset the bottom sheet animation curve, so
+  /// that it animates non-linearly. Called before [onClosing] if the bottom
+  /// sheet is closing.
+  final BottomSheetDragEndHandler? onDragEnd;
+
+  /// The bottom sheet's background color.
+  ///
+  /// Defines the bottom sheet's [Material.color].
+  ///
+  /// Defaults to null and falls back to [Material]'s default.
+  final Color? backgroundColor;
+
+  /// The color of the shadow below the sheet.
+  ///
+  /// If this property is null, then [BottomSheetThemeData.shadowColor] of
+  /// [ThemeData.bottomSheetTheme] is used. If that is also null, the default
+  /// value is transparent.
+  ///
+  /// See also:
+  ///
+  ///  * [elevation], which defines the size of the shadow below the sheet.
+  ///  * [shape], which defines the shape of the sheet and its shadow.
+  final Color? shadowColor;
+
+  /// The z-coordinate at which to place this material relative to its parent.
+  ///
+  /// This controls the size of the shadow below the material.
+  ///
+  /// Defaults to 0. The value is non-negative.
+  final double? elevation;
+
+  /// The shape of the bottom sheet.
+  ///
+  /// Defines the bottom sheet's [Material.shape].
+  ///
+  /// Defaults to null and falls back to [Material]'s default.
+  final ShapeBorder? shape;
+
+  /// {@macro flutter.material.Material.clipBehavior}
+  ///
+  /// Defines the bottom sheet's [Material.clipBehavior].
+  ///
+  /// Use this property to enable clipping of content when the bottom sheet has
+  /// a custom [shape] and the content can extend past this shape. For example,
+  /// a bottom sheet with rounded corners and an edge-to-edge [Image] at the
+  /// top.
+  ///
+  /// If this property is null then [BottomSheetThemeData.clipBehavior] of
+  /// [ThemeData.bottomSheetTheme] is used. If that's null then the behavior
+  /// will be [Clip.none].
+  final Clip? clipBehavior;
+
+  /// Defines minimum and maximum sizes for a [PersistentBottomSheet].
+  ///
+  /// If null, then the ambient [ThemeData.bottomSheetTheme]'s
+  /// [BottomSheetThemeData.constraints] will be used. If that
+  /// is null and [ThemeData.useMaterial3] is true, then the bottom sheet
+  /// will have a max width of 640dp. If [ThemeData.useMaterial3] is false, then
+  /// the bottom sheet's size will be constrained by its parent
+  /// (usually a [Scaffold]). In this case, consider limiting the width by
+  /// setting smaller constraints for large screens.
+  ///
+  /// If constraints are specified (either in this property or in the
+  /// theme), the bottom sheet will be aligned to the bottom-center of
+  /// the available space. Otherwise, no alignment is applied.
+  final BoxConstraints? constraints;
+
+  /// Defines the minimum height for the sheet's content, i.e. the widget
+  /// returned by [builder].
   ///
   /// If both [minContentHeight] and [constraints] are non-null, the minimum
   /// total bottom sheet height is determined as the greater of the following:
   ///
   ///   * [constraints].minHeight
-  ///   * [minContentHeight] + drag handle height
-  final Reference<double>? minContentHeight;
-
-  /// A builder for the sheet's drag handle.
-  ///
-  /// The bottom sheet will wrap the widget produced by this builder in a
-  /// [Material] widget.
-  final StatefulWidgetBuilder? dragHandleBuilder;
+  ///   * [minContentHeight] + [dragHandleHeight]
+  final ReadOnlyReference<double?>? minContentHeight;
 
   @override
   State<PersistentBottomSheet> createState() => _PersistentBottomSheetState();
 }
 
-class _PersistentBottomSheetState extends State<PersistentBottomSheet>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
-  final Set<WidgetState> _dragHandleWidgetState = <WidgetState>{};
-  final Reference<double> _minHeight = Reference<double>();
-  final Reference<double> _maxHeight = Reference<double>();
-  final Reference<double> _dragHandleHeight = Reference<double>();
-  final Reference<Curve> _animationCurve = Reference<Curve>(Easing.legacy);
-
-  AnimationController get _animationController =>
-      widget.animationController ?? _controller!;
+class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
+  late Reference<double?> _dragHandleHeight;
+  final Reference<double?> _minHeight = Reference<double?>(null);
+  final Reference<double?> _maxHeight = Reference<double?>(null);
+  final ValueNotifier<Set<WidgetState>> _dragHandleWidgetState =
+      ValueNotifier<Set<WidgetState>>(<WidgetState>{});
 
   bool get _dismissUnderway =>
-      _animationController.status == AnimationStatus.reverse;
+      widget.animationController.status == AnimationStatus.reverse;
 
   double get _dragExtent {
     final double dragHandleHeight = _dragHandleHeight.value ?? 0.0;
@@ -98,34 +226,29 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
   @override
   void initState() {
     super.initState();
-    if (widget.animationController == null) {
-      _controller = BottomSheet.createAnimationController(this);
-    }
+    _dragHandleHeight = widget.dragHandleHeight ?? Reference<double?>(null);
   }
 
   @override
   void didUpdateWidget(final PersistentBottomSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.animationController == null && _controller == null) {
-      _controller = BottomSheet.createAnimationController(this);
-    } else if (widget.animationController != null && _controller != null) {
-      _controller?.dispose();
-      _controller = null;
+
+    final Reference<double?>? oldReference = oldWidget.dragHandleHeight;
+    final Reference<double?>? newReference = widget.dragHandleHeight;
+    if (oldReference != null && newReference == null) {
+      _dragHandleHeight = Reference<double?>(oldReference.value);
+    } else if (oldReference == null && newReference != null) {
+      newReference.value = _dragHandleHeight.value;
+      _dragHandleHeight = newReference;
+    } else if (oldReference != newReference) {
+      newReference!.value = oldReference!.value;
+      _dragHandleHeight = newReference;
     }
   }
 
-  @override
-  void dispose() {
-    _controller?.dispose();
-    _controller = null;
-    super.dispose();
-  }
-
   void _handleDragStart(final DragStartDetails details) {
-    setState(() {
-      _dragHandleWidgetState.add(WidgetState.dragged);
-    });
-    _animationCurve.value = Curves.linear;
+    _dragHandleWidgetState.value =
+        _dragHandleWidgetState.value.union(<WidgetState>{WidgetState.dragged});
     widget.onDragStart?.call(details);
   }
 
@@ -133,55 +256,49 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
     if (_dismissUnderway) {
       return;
     }
-    if (_animationController.isDismissed) {
+    final double unitDelta = details.primaryDelta! / _dragExtent;
+    if ((widget.animationController.value == 0.0 && unitDelta > 0.0) ||
+        (widget.animationController.value == 1.0 && unitDelta < 0.0)) {
+      return;
+    }
+    if (widget.animationController.isDismissed) {
       // When trying to drag the bottom sheet open after closing it, the
       // animation controller will assume the "reverse" direction, which
       // leads the _dismissUnderway property to falsely identifying this
       // gesture as a dismissal. Calling animateTo with the current value
       // of the animation controller enforces the "forward" direction.
-      _animationController.animateTo(
-        _animationController.value,
+      widget.animationController.animateTo(
+        widget.animationController.value,
         duration: Duration.zero,
       );
     }
-    final double unitDelta = details.primaryDelta! / _dragExtent;
-    if ((_animationController.value == 0.0 && unitDelta > 0.0) ||
-        (_animationController.value == 1.0 && unitDelta < 0.0)) {
-      return;
-    }
-    _animationController.value -= unitDelta;
+    widget.animationController.value -= unitDelta;
   }
 
   void _handleDragEnd(final DragEndDetails details) {
     if (_dismissUnderway) {
       return;
     }
-    setState(() {
-      _dragHandleWidgetState.remove(WidgetState.dragged);
-    });
+    _dragHandleWidgetState.value = _dragHandleWidgetState.value
+        .difference(<WidgetState>{WidgetState.dragged});
     bool isClosing = false;
     if (details.velocity.pixelsPerSecond.dy > _minFlingVelocity) {
       final double flingVelocity =
           -details.velocity.pixelsPerSecond.dy / _dragExtent;
-      if (_animationController.value > 0.0) {
-        _animationController.fling(velocity: flingVelocity);
+      if (widget.animationController.value > 0.0) {
+        widget.animationController.fling(velocity: flingVelocity);
       }
       if (flingVelocity < 0.0) {
         isClosing = true;
       }
-    } else if (_animationController.value < _closeProgressThreshold) {
-      if (_animationController.value > 0.0) {
-        _animationController.fling(velocity: -1.0);
+    } else if (widget.animationController.value < _closeProgressThreshold) {
+      if (widget.animationController.value > 0.0) {
+        widget.animationController.fling(velocity: -1.0);
       }
       isClosing = true;
     } else {
-      _animationController.forward();
+      widget.animationController.forward();
     }
-
-    _animationCurve.value = Split(
-      _animationController.value,
-      endCurve: Easing.legacy,
-    );
 
     widget.onDragEnd?.call(
       details,
@@ -189,19 +306,21 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
     );
 
     if (isClosing) {
-      widget.onClosing();
+      widget.onClosing?.call();
     }
   }
 
   void _handleDragHandleHover(final bool hovering) {
-    if (hovering != _dragHandleWidgetState.contains(WidgetState.hovered)) {
-      setState(() {
-        if (hovering) {
-          _dragHandleWidgetState.add(WidgetState.hovered);
-        } else {
-          _dragHandleWidgetState.remove(WidgetState.hovered);
-        }
-      });
+    if (hovering ==
+        _dragHandleWidgetState.value.contains(WidgetState.hovered)) {
+      return;
+    }
+    if (hovering) {
+      _dragHandleWidgetState.value = _dragHandleWidgetState.value
+          .union(<WidgetState>{WidgetState.hovered});
+    } else {
+      _dragHandleWidgetState.value = _dragHandleWidgetState.value
+          .difference(<WidgetState>{WidgetState.hovered});
     }
   }
 
@@ -232,20 +351,24 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
         widget.shape ?? bottomSheetTheme.shape ?? defaults.shape;
     final Clip clipBehavior =
         widget.clipBehavior ?? bottomSheetTheme.clipBehavior ?? Clip.none;
-    final bool showDragHandle = widget.showDragHandle ??
-        (widget.enableDrag && (bottomSheetTheme.showDragHandle ?? false));
+    final bool showDragHandle =
+        widget.showDragHandle ?? bottomSheetTheme.showDragHandle ?? true;
 
     Widget? dragHandle;
     if (showDragHandle) {
-      dragHandle =
-          widget.dragHandleBuilder?.call(context, _dragHandleWidgetState) ??
+      dragHandle = MouseRegion(
+        onEnter: (final _) => _handleDragHandleHover(true),
+        onExit: (final _) => _handleDragHandleHover(false),
+        child: DragHandleWidgetState(
+          notifier: _dragHandleWidgetState,
+          child: widget.dragHandleBuilder?.call(context) ??
               _DragHandle(
                 onSemanticsTap: widget.onClosing,
-                handleHover: _handleDragHandleHover,
-                widgetState: _dragHandleWidgetState,
                 dragHandleColor: widget.dragHandleColor,
                 dragHandleSize: widget.dragHandleSize,
-              );
+              ),
+        ),
+      );
       // Only add [_BottomSheetGestureDetector] to the drag handle when the rest
       // of the bottom sheet is not draggable. If the whole bottom sheet is
       // draggable, no need to add it.
@@ -258,12 +381,12 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
         );
       }
 
-      dragHandle = _MeasureHeight(height: _dragHandleHeight, child: dragHandle);
+      dragHandle = MeasureHeight(height: _dragHandleHeight, child: dragHandle);
     } else {
       _dragHandleHeight.value = null;
     }
 
-    Widget bottomSheet = _MeasureHeight(
+    Widget bottomSheet = MeasureHeight(
       minHeight: _minHeight,
       maxHeight: _maxHeight,
       child: Material(
@@ -275,8 +398,8 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
         clipBehavior: clipBehavior,
         child: _SheetContainer(
           minContentHeight: widget.minContentHeight,
-          animationCurve: _animationCurve,
-          animation: _animationController,
+          animation: widget.animationController,
+          curve: widget.curve,
           dragHandle: dragHandle,
           content: widget.builder(context),
         ),
@@ -301,18 +424,60 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet>
   }
 }
 
+/// A widget that determines the interactive state of its descendants.
+///
+/// For example, a drag handle implementation can use this information to change
+/// its color on hover.
+class DragHandleWidgetState
+    extends InheritedNotifier<ValueNotifier<Set<WidgetState>>> {
+  /// Creates a widget that determines the interactive state of its descendants.
+  const DragHandleWidgetState({
+    super.key,
+    required ValueNotifier<Set<WidgetState>> super.notifier,
+    required super.child,
+  });
+
+  /// A set of widget states from the closest instance of this class that
+  /// encloses the given [context].
+  ///
+  /// If there is no [DragHandleWidgetState] ancestor widget in the tree at the
+  /// given context, then this will throw a descriptive [AssertionError] in
+  /// debug mode and an exception in release mode.
+  ///
+  /// See also:
+  ///
+  ///  * [maybeOf], which will return null if no [DragHandleWidgetState]
+  ///    ancestor widget is in the tree.
+  static Set<WidgetState> of(final BuildContext context) {
+    final Set<WidgetState>? result = maybeOf(context);
+    assert(result != null, 'No DragHandleWidgetState found in context');
+    return result!;
+  }
+
+  /// A set of widget states from the closest instance of this class that
+  /// encloses the given [context].
+  ///
+  /// If there is no [DragHandleWidgetState] ancestor widget in the tree at the
+  /// given context, then this will return null.
+  ///
+  /// See also:
+  ///
+  ///  * [of], which will throw if no [DragHandleWidgetState] ancestor widget is
+  ///    in the tree.
+  static Set<WidgetState>? maybeOf(final BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<DragHandleWidgetState>()
+      ?.notifier!
+      .value;
+}
+
 class _DragHandle extends StatelessWidget {
   const _DragHandle({
     required this.onSemanticsTap,
-    required this.handleHover,
-    required this.widgetState,
     this.dragHandleColor,
     this.dragHandleSize,
   });
 
   final VoidCallback? onSemanticsTap;
-  final ValueChanged<bool> handleHover;
-  final Set<WidgetState> widgetState;
   final Color? dragHandleColor;
   final Size? dragHandleSize;
 
@@ -324,33 +489,30 @@ class _DragHandle extends StatelessWidget {
     final Size handleSize = dragHandleSize ??
         bottomSheetTheme.dragHandleSize ??
         m3Defaults.dragHandleSize!;
+    final Set<WidgetState> widgetState = DragHandleWidgetState.of(context);
 
-    return MouseRegion(
-      onEnter: (final PointerEnterEvent event) => handleHover(true),
-      onExit: (final PointerExitEvent event) => handleHover(false),
-      child: Semantics(
-        label: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-        container: true,
-        onTap: onSemanticsTap,
-        child: SizedBox(
-          height: kMinInteractiveDimension,
-          width: kMinInteractiveDimension,
-          child: Center(
-            child: Container(
-              height: handleSize.height,
-              width: handleSize.width,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(handleSize.height / 2),
-                color: WidgetStateProperty.resolveAs<Color?>(
-                      dragHandleColor,
-                      widgetState,
-                    ) ??
-                    WidgetStateProperty.resolveAs<Color?>(
-                      bottomSheetTheme.dragHandleColor,
-                      widgetState,
-                    ) ??
-                    m3Defaults.dragHandleColor,
-              ),
+    return Semantics(
+      label: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      container: true,
+      onTap: onSemanticsTap,
+      child: SizedBox(
+        height: kMinInteractiveDimension,
+        width: kMinInteractiveDimension,
+        child: Center(
+          child: Container(
+            height: handleSize.height,
+            width: handleSize.width,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(handleSize.height / 2),
+              color: WidgetStateProperty.resolveAs<Color?>(
+                    dragHandleColor,
+                    widgetState,
+                  ) ??
+                  WidgetStateProperty.resolveAs<Color?>(
+                    bottomSheetTheme.dragHandleColor,
+                    widgetState,
+                  ) ??
+                  m3Defaults.dragHandleColor,
             ),
           ),
         ),
@@ -392,90 +554,6 @@ class _BottomSheetGestureDetector extends StatelessWidget {
       );
 }
 
-class _MeasureHeight extends SingleChildRenderObjectWidget {
-  const _MeasureHeight({
-    super.child,
-    this.height,
-    this.minHeight,
-    this.maxHeight,
-  });
-
-  final Reference<double>? height;
-  final Reference<double>? minHeight;
-  final Reference<double>? maxHeight;
-
-  @override
-  RenderObject createRenderObject(final BuildContext context) =>
-      _RenderMeasureHeight(height, minHeight, maxHeight);
-
-  @override
-  void updateRenderObject(
-    final BuildContext context,
-    final _RenderMeasureHeight renderObject,
-  ) {
-    renderObject
-      ..height = height
-      ..minHeight = minHeight
-      ..maxHeight = maxHeight;
-  }
-}
-
-class _RenderMeasureHeight extends RenderProxyBox {
-  _RenderMeasureHeight(this._height, this._minHeight, this._maxHeight);
-
-  Reference<double>? get height => _height;
-  Reference<double>? _height;
-  set height(final Reference<double>? value) {
-    if (_height == value) {
-      return;
-    }
-    if (_height != null && value != null) {
-      value.value = _height!.value;
-    }
-    _height = value;
-  }
-
-  Reference<double>? get minHeight => _minHeight;
-  Reference<double>? _minHeight;
-  set minHeight(final Reference<double>? value) {
-    if (_minHeight == value) {
-      return;
-    }
-    if (_minHeight != null && value != null) {
-      value.value = _minHeight!.value;
-    }
-    _minHeight = value;
-  }
-
-  Reference<double>? get maxHeight => _maxHeight;
-  Reference<double>? _maxHeight;
-  set maxHeight(final Reference<double>? value) {
-    if (_maxHeight == value) {
-      return;
-    }
-    if (_maxHeight != null && value != null) {
-      value.value = _maxHeight!.value;
-    }
-    _maxHeight = value;
-  }
-
-  @override
-  void layout(
-    final Constraints constraints, {
-    final bool parentUsesSize = false,
-  }) {
-    super.layout(constraints, parentUsesSize: parentUsesSize);
-    _minHeight?.value = this.constraints.minHeight;
-    _maxHeight?.value = this.constraints.maxHeight;
-  }
-
-  @override
-  set size(final Size value) {
-    super.size = value;
-    _height?.value = size.height;
-  }
-}
-
 enum _SheetContainerSlot {
   dragHandle,
   content,
@@ -485,15 +563,15 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
     _SheetContainerSlot, RenderBox> {
   const _SheetContainer({
     this.minContentHeight,
-    required this.animationCurve,
     required this.animation,
+    required this.curve,
     required this.dragHandle,
     required this.content,
   });
 
-  final Reference<double>? minContentHeight;
-  final Reference<Curve> animationCurve;
+  final ReadOnlyReference<double?>? minContentHeight;
   final Animation<double> animation;
+  final Reference<Curve> curve;
   final Widget? dragHandle;
   final Widget content;
 
@@ -509,7 +587,7 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
   @override
   SlottedContainerRenderObjectMixin<_SheetContainerSlot, RenderBox>
       createRenderObject(final BuildContext context) =>
-          _RenderSheetContainer(minContentHeight, animationCurve, animation);
+          _RenderSheetContainer(minContentHeight, animation, curve);
 
   @override
   void updateRenderObject(
@@ -518,22 +596,18 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
   ) {
     renderObject
       ..minContentHeight = minContentHeight
-      ..animationCurve = animationCurve
-      ..animation = animation;
+      ..animation = animation
+      ..curve = curve;
   }
 }
 
 class _RenderSheetContainer extends RenderBox
     with SlottedContainerRenderObjectMixin<_SheetContainerSlot, RenderBox> {
-  _RenderSheetContainer(
-    this._minContentHeight,
-    this._animationCurve,
-    this._animation,
-  );
+  _RenderSheetContainer(this._minContentHeight, this._animation, this._curve);
 
-  Reference<double>? get minContentHeight => _minContentHeight;
-  Reference<double>? _minContentHeight;
-  set minContentHeight(final Reference<double>? value) {
+  ReadOnlyReference<double?>? get minContentHeight => _minContentHeight;
+  ReadOnlyReference<double?>? _minContentHeight;
+  set minContentHeight(final ReadOnlyReference<double?>? value) {
     if (_minContentHeight == value) {
       return;
     }
@@ -541,23 +615,6 @@ class _RenderSheetContainer extends RenderBox
       markNeedsLayout();
     }
     _minContentHeight = value;
-  }
-
-  Reference<Curve> get animationCurve => _animationCurve;
-  Reference<Curve> _animationCurve;
-  set animationCurve(final Reference<Curve> value) {
-    if (_animationCurve == value) {
-      return;
-    }
-    if (attached) {
-      final double oldValue =
-          _animationCurve.value!.transform(_animation.value);
-      final double newValue = value.value!.transform(_animation.value);
-      if (oldValue != newValue) {
-        markNeedsLayout();
-      }
-    }
-    _animationCurve = value;
   }
 
   Animation<double> get animation => _animation;
@@ -574,6 +631,22 @@ class _RenderSheetContainer extends RenderBox
     if (attached) {
       _animation.addListener(markNeedsLayout);
     }
+  }
+
+  Reference<Curve> get curve => _curve;
+  Reference<Curve> _curve;
+  set curve(final Reference<Curve> value) {
+    if (_curve == value) {
+      return;
+    }
+    if (attached) {
+      final double oldValue = _curve.value.transform(_animation.value);
+      final double newValue = value.value.transform(_animation.value);
+      if (oldValue != newValue) {
+        markNeedsLayout();
+      }
+    }
+    _curve = value;
   }
 
   @override
@@ -617,7 +690,7 @@ class _RenderSheetContainer extends RenderBox
 
     size = Size(
       constraints.maxWidth,
-      minHeight + dragExtent * animationCurve.value!.transform(animation.value),
+      minHeight + dragExtent * curve.value.transform(animation.value),
     );
   }
 
