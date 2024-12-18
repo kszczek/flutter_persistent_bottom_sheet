@@ -44,9 +44,14 @@ class RenderHeightObserver extends RenderProxyBox {
     _onHeightChanged = value;
   }
 
+  double? _lastHeight;
+
   @override
   set size(final Size value) {
     super.size = value;
-    _onHeightChanged(size.height);
+    if (size.height != _lastHeight) {
+      _lastHeight = size.height;
+      _onHeightChanged(size.height);
+    }
   }
 }
