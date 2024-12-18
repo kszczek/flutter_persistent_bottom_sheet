@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_persistent_bottom_sheet/src/height_observer.dart';
+import 'package:flutter_persistent_bottom_sheet/src/layout_observer.dart';
 import 'package:flutter_persistent_bottom_sheet/src/reference.dart';
 
 const double _minFlingVelocity = 700.0;
@@ -401,13 +401,14 @@ class BottomSheetDimensions with ChangeNotifier {
   ///
   /// This property can be hardcoded or measured during the layout phase.
   /// For example, to measure the height of a [NavigationBar] into this
-  /// property, you can use the [HeightObserver] widget:
+  /// property, you can use the [LayoutObserver] widget:
   ///
   /// ```dart
-  /// HeightObserver(
+  /// LayoutObserver(
   ///   onHeightChanged: (final double height) {
   ///     dimensions.minContentHeight = height;
   ///   },
+  ///   onLayoutMarkedDirty: dimensions.markNeedsLayout,
   ///   child: NavigationBar(
   ///     ...
   ///   ),
