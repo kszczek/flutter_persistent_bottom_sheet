@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_persistent_bottom_sheet/src/layout_observer.dart';
-import 'package:flutter_persistent_bottom_sheet/src/reference.dart';
 
 const double _minFlingVelocity = 700.0;
 const double _closeProgressThreshold = 0.5;
@@ -36,8 +35,8 @@ class PersistentBottomSheet extends StatefulWidget {
     this.shape,
     this.clipBehavior,
     this.constraints,
+    this.animation,
     required this.animationController,
-    required this.curve,
     required this.dimensions,
     required this.builder,
   }) : assert(
@@ -51,9 +50,6 @@ class PersistentBottomSheet extends StatefulWidget {
   /// The PersistentBottomSheet widget will manipulate the position of this
   /// animation, it is not just a passive observer.
   final AnimationController animationController;
-
-  /// The animation curve to use when opening/closing the bottom sheet.
-  final Reference<Curve> curve;
 
   /// Mutable dimensions of this bottom sheet.
   ///
@@ -188,6 +184,14 @@ class PersistentBottomSheet extends StatefulWidget {
   /// theme), the bottom sheet will be aligned to the bottom-center of
   /// the available space. Otherwise, no alignment is applied.
   final BoxConstraints? constraints;
+
+  /// The animation to use when opening/closing the bottom sheet.
+  ///
+  /// This is typically a [CurvedAnimation] with the [animationController] as
+  /// its parent.
+  ///
+  /// Defaults to using raw values from the [animationController].
+  final Animation<double>? animation;
 
   @override
   State<PersistentBottomSheet> createState() => _PersistentBottomSheetState();
@@ -346,8 +350,7 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
       clipBehavior: clipBehavior,
       child: _SheetContainer(
         dimensions: widget.dimensions,
-        animation: widget.animationController,
-        curve: widget.curve,
+        animation: widget.animation ?? widget.animationController,
         dragHandle: dragHandle,
         content: widget.builder(context),
       ),
@@ -559,14 +562,12 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
   const _SheetContainer({
     required this.dimensions,
     required this.animation,
-    required this.curve,
     required this.dragHandle,
     required this.content,
   });
 
   final BottomSheetDimensions dimensions;
   final Animation<double> animation;
-  final Reference<Curve> curve;
   final Widget? dragHandle;
   final Widget content;
 
@@ -582,7 +583,7 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
   @override
   SlottedContainerRenderObjectMixin<_SheetContainerSlot, RenderBox>
       createRenderObject(final BuildContext context) =>
-          _RenderSheetContainer(dimensions, animation, curve);
+          _RenderSheetContainer(dimensions, animation);
 
   @override
   void updateRenderObject(
@@ -591,14 +592,13 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
   ) {
     renderObject
       ..dimensions = dimensions
-      ..animation = animation
-      ..curve = curve;
+      ..animation = animation;
   }
 }
 
 class _RenderSheetContainer extends RenderBox
     with SlottedContainerRenderObjectMixin<_SheetContainerSlot, RenderBox> {
-  _RenderSheetContainer(this._dimensions, this._animation, this._curve);
+  _RenderSheetContainer(this._dimensions, this._animation);
 
   BottomSheetDimensions get dimensions => _dimensions;
   BottomSheetDimensions _dimensions;
@@ -626,22 +626,6 @@ class _RenderSheetContainer extends RenderBox
     if (attached) {
       _animation.addListener(markNeedsLayout);
     }
-  }
-
-  Reference<Curve> get curve => _curve;
-  Reference<Curve> _curve;
-  set curve(final Reference<Curve> value) {
-    if (_curve == value) {
-      return;
-    }
-    if (attached) {
-      final double oldValue = _curve.value.transform(_animation.value);
-      final double newValue = value.value.transform(_animation.value);
-      if (oldValue != newValue) {
-        markNeedsLayout();
-      }
-    }
-    _curve = value;
   }
 
   @override
@@ -689,7 +673,7 @@ class _RenderSheetContainer extends RenderBox
 
     size = Size(
       constraints.maxWidth,
-      minHeight + dragExtent * curve.value.transform(animation.value),
+      minHeight + dragExtent * animation.value,
     );
   }
 
