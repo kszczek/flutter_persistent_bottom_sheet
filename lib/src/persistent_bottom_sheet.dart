@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_persistent_bottom_sheet/src/measure_height.dart';
+import 'package:flutter_persistent_bottom_sheet/src/height_observer.dart';
 import 'package:flutter_persistent_bottom_sheet/src/reference.dart';
 
 const double _minFlingVelocity = 700.0;
@@ -14,12 +14,12 @@ class PersistentBottomSheet extends StatefulWidget {
   /// Creates a persistent bottom sheet.
   ///
   /// The [dragHandleColor] and [dragHandleSize] parameters are only used for
-  /// the default drag handle, i.e. when [showDragHandle] is `true` and
-  /// [dragHandleBuilder] is `null`. Otherwise, these parameters are ignored.
+  /// the default drag handle, i.e. when [showDragHandle] is true and
+  /// [dragHandleBuilder] is null. Otherwise, these parameters are ignored.
   ///
   /// The [constraints] parameter constrains the size of the entire bottom
   /// sheet, including both the content and the drag handle, whereas
-  /// [minContentHeight] only constrains the content.
+  /// [dimensions] constrain the discrete parts of the bottom sheet.
   const PersistentBottomSheet({
     super.key,
     this.onClosing,
@@ -28,7 +28,6 @@ class PersistentBottomSheet extends StatefulWidget {
     this.dragHandleColor,
     this.dragHandleSize,
     this.dragHandleBuilder,
-    this.dragHandleHeight,
     this.onDragStart,
     this.onDragEnd,
     this.backgroundColor,
@@ -37,9 +36,9 @@ class PersistentBottomSheet extends StatefulWidget {
     this.shape,
     this.clipBehavior,
     this.constraints,
-    this.minContentHeight,
     required this.animationController,
     required this.curve,
+    required this.dimensions,
     required this.builder,
   }) : assert(
           elevation == null || elevation >= 0.0,
@@ -55,6 +54,14 @@ class PersistentBottomSheet extends StatefulWidget {
 
   /// The animation curve to use when opening/closing the bottom sheet.
   final Reference<Curve> curve;
+
+  /// Mutable dimensions of this bottom sheet.
+  ///
+  /// [PersistentBottomSheet] will notify listeners of [dimensions] whenever the
+  /// bottom sheet's layout is marked dirty. Widgets that depend on the bottom
+  /// sheet's dimensions can listen to this notifier and update their own layout
+  /// accordingly.
+  final BottomSheetDimensions dimensions;
 
   /// A builder for the contents of the sheet.
   ///
@@ -104,13 +111,6 @@ class PersistentBottomSheet extends StatefulWidget {
   /// The bottom sheet will wrap the widget produced by this builder in a
   /// [Material] widget.
   final WidgetBuilder? dragHandleBuilder;
-
-  /// Stores the drag handle height, set by the widget at layout time.
-  ///
-  /// If provided, the [PersistentBottomSheet] will use this reference to store
-  /// the height of the drag handle at layout time, so that other widgets in
-  /// neighboring subtrees can size themselves accordingly.
-  final Reference<double?>? dragHandleHeight;
 
   /// Called when the user begins dragging the bottom sheet vertically, if
   /// [showDragHandle] or [enableDrag] is true.
@@ -189,24 +189,12 @@ class PersistentBottomSheet extends StatefulWidget {
   /// the available space. Otherwise, no alignment is applied.
   final BoxConstraints? constraints;
 
-  /// Defines the minimum height for the sheet's content, i.e. the widget
-  /// returned by [builder].
-  ///
-  /// If both [minContentHeight] and [constraints] are non-null, the minimum
-  /// total bottom sheet height is determined as the greater of the following:
-  ///
-  ///   * [constraints].minHeight
-  ///   * [minContentHeight] + [dragHandleHeight]
-  final ReadOnlyReference<double?>? minContentHeight;
-
   @override
   State<PersistentBottomSheet> createState() => _PersistentBottomSheetState();
 }
 
 class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
-  late Reference<double?> _dragHandleHeight;
-  final Reference<double?> _minHeight = Reference<double?>(null);
-  final Reference<double?> _maxHeight = Reference<double?>(null);
+  final GlobalKey _childKey = GlobalKey();
   final ValueNotifier<Set<WidgetState>> _dragHandleWidgetState =
       ValueNotifier<Set<WidgetState>>(<WidgetState>{});
 
@@ -214,36 +202,15 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
       widget.animationController.status == AnimationStatus.reverse;
 
   double get _dragExtent {
-    final double dragHandleHeight = _dragHandleHeight.value ?? 0.0;
-    final double minContentHeight = widget.minContentHeight?.value! ?? 0.0;
+    final RenderBox renderBox =
+        _childKey.currentContext!.findRenderObject()! as RenderBox;
+    final double dragHandleHeight = widget.dimensions.dragHandleHeight ?? 0.0;
+    final double minContentHeight = widget.dimensions.minContentHeight ?? 0.0;
     final double minHeight = math.max(
-      _minHeight.value!,
+      renderBox.constraints.minHeight,
       dragHandleHeight + minContentHeight,
     );
-    return math.max(0.0, _maxHeight.value! - minHeight);
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _dragHandleHeight = widget.dragHandleHeight ?? Reference<double?>(null);
-  }
-
-  @override
-  void didUpdateWidget(final PersistentBottomSheet oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    final Reference<double?>? oldReference = oldWidget.dragHandleHeight;
-    final Reference<double?>? newReference = widget.dragHandleHeight;
-    if (oldReference != null && newReference == null) {
-      _dragHandleHeight = Reference<double?>(oldReference.value);
-    } else if (oldReference == null && newReference != null) {
-      newReference.value = _dragHandleHeight.value;
-      _dragHandleHeight = newReference;
-    } else if (oldReference != newReference) {
-      newReference!.value = oldReference!.value;
-      _dragHandleHeight = newReference;
-    }
+    return math.max(0.0, renderBox.constraints.maxHeight - minHeight);
   }
 
   void _handleDragStart(final DragStartDetails details) {
@@ -381,28 +348,30 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
         );
       }
 
-      dragHandle = MeasureHeight(height: _dragHandleHeight, child: dragHandle);
+      dragHandle = HeightObserver(
+        onHeightChanged: (final double height) {
+          widget.dimensions._dragHandleHeight = height;
+        },
+        child: dragHandle,
+      );
     } else {
-      _dragHandleHeight.value = null;
+      widget.dimensions._dragHandleHeight = null;
     }
 
-    Widget bottomSheet = MeasureHeight(
-      minHeight: _minHeight,
-      maxHeight: _maxHeight,
-      child: Material(
-        color: color,
-        elevation: elevation,
-        surfaceTintColor: surfaceTintColor,
-        shadowColor: shadowColor,
-        shape: shape,
-        clipBehavior: clipBehavior,
-        child: _SheetContainer(
-          minContentHeight: widget.minContentHeight,
-          animation: widget.animationController,
-          curve: widget.curve,
-          dragHandle: dragHandle,
-          content: widget.builder(context),
-        ),
+    Widget bottomSheet = Material(
+      color: color,
+      elevation: elevation,
+      surfaceTintColor: surfaceTintColor,
+      shadowColor: shadowColor,
+      shape: shape,
+      clipBehavior: clipBehavior,
+      child: _SheetContainer(
+        key: _childKey,
+        dimensions: widget.dimensions,
+        animation: widget.animationController,
+        curve: widget.curve,
+        dragHandle: dragHandle,
+        content: widget.builder(context),
       ),
     );
 
@@ -422,6 +391,47 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
             child: bottomSheet,
           );
   }
+}
+
+/// A [Listenable] that holds mutable layout properties of a
+/// [PersistentBottomSheet].
+///
+/// Listeners are notified whenever the bottom sheet's layout is marked dirty,
+/// allowing dependent widgets to update their own layouts accordingly.
+class BottomSheetDimensions with ChangeNotifier {
+  /// The height of the drag handle.
+  ///
+  /// This value is measured by the [PersistentBottomSheet] during the layout
+  /// phase.
+  double? get dragHandleHeight => _dragHandleHeight;
+  double? _dragHandleHeight;
+
+  /// The minimum height of the content.
+  ///
+  /// If both [minContentHeight] and [PersistentBottomSheet.constraints] are
+  /// provided, the total minimum height of the [PersistentBottomSheet] is
+  /// the greater of:
+  ///
+  ///   * [PersistentBottomSheet.constraints].minHeight
+  ///   * [minContentHeight] + [dragHandleHeight]
+  ///
+  /// This property can be hardcoded or measured during the layout phase.
+  /// For example, to measure the height of a [NavigationBar] into this
+  /// property, you can use the [HeightObserver] widget:
+  ///
+  /// ```dart
+  /// HeightObserver(
+  ///   onHeightChanged: (final double height) {
+  ///     dimensions.minContentHeight = height;
+  ///   },
+  ///   child: NavigationBar(
+  ///     ...
+  ///   ),
+  /// )
+  /// ```
+  double? minContentHeight;
+
+  void _markNeedsLayout() => notifyListeners();
 }
 
 /// A widget that determines the interactive state of its descendants.
@@ -562,14 +572,15 @@ enum _SheetContainerSlot {
 class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
     _SheetContainerSlot, RenderBox> {
   const _SheetContainer({
-    this.minContentHeight,
+    super.key,
+    required this.dimensions,
     required this.animation,
     required this.curve,
     required this.dragHandle,
     required this.content,
   });
 
-  final ReadOnlyReference<double?>? minContentHeight;
+  final BottomSheetDimensions dimensions;
   final Animation<double> animation;
   final Reference<Curve> curve;
   final Widget? dragHandle;
@@ -587,7 +598,7 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
   @override
   SlottedContainerRenderObjectMixin<_SheetContainerSlot, RenderBox>
       createRenderObject(final BuildContext context) =>
-          _RenderSheetContainer(minContentHeight, animation, curve);
+          _RenderSheetContainer(dimensions, animation, curve);
 
   @override
   void updateRenderObject(
@@ -595,7 +606,7 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
     final _RenderSheetContainer renderObject,
   ) {
     renderObject
-      ..minContentHeight = minContentHeight
+      ..dimensions = dimensions
       ..animation = animation
       ..curve = curve;
   }
@@ -603,18 +614,18 @@ class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
 
 class _RenderSheetContainer extends RenderBox
     with SlottedContainerRenderObjectMixin<_SheetContainerSlot, RenderBox> {
-  _RenderSheetContainer(this._minContentHeight, this._animation, this._curve);
+  _RenderSheetContainer(this._dimensions, this._animation, this._curve);
 
-  ReadOnlyReference<double?>? get minContentHeight => _minContentHeight;
-  ReadOnlyReference<double?>? _minContentHeight;
-  set minContentHeight(final ReadOnlyReference<double?>? value) {
-    if (_minContentHeight == value) {
+  BottomSheetDimensions get dimensions => _dimensions;
+  BottomSheetDimensions _dimensions;
+  set dimensions(final BottomSheetDimensions value) {
+    if (_dimensions == value) {
       return;
     }
-    if (attached && _minContentHeight?.value != value?.value) {
+    if (attached && _dimensions.minContentHeight != value.minContentHeight) {
       markNeedsLayout();
     }
-    _minContentHeight = value;
+    _dimensions = value;
   }
 
   Animation<double> get animation => _animation;
@@ -663,7 +674,7 @@ class _RenderSheetContainer extends RenderBox
 
   @override
   void performLayout() {
-    final double minContentHeight = this.minContentHeight?.value! ?? 0.0;
+    final double minContentHeight = _dimensions.minContentHeight ?? 0.0;
     final RenderBox? dragHandle = childForSlot(_SheetContainerSlot.dragHandle);
     final RenderBox content = childForSlot(_SheetContainerSlot.content)!;
 
@@ -738,6 +749,12 @@ class _RenderSheetContainer extends RenderBox
       }
     }
     return false;
+  }
+
+  @override
+  void markNeedsLayout() {
+    super.markNeedsLayout();
+    _dimensions._markNeedsLayout();
   }
 }
 
