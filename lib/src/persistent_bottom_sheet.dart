@@ -194,24 +194,11 @@ class PersistentBottomSheet extends StatefulWidget {
 }
 
 class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
-  final GlobalKey _childKey = GlobalKey();
   final ValueNotifier<Set<WidgetState>> _dragHandleWidgetState =
       ValueNotifier<Set<WidgetState>>(<WidgetState>{});
 
   bool get _dismissUnderway =>
       widget.animationController.status == AnimationStatus.reverse;
-
-  double get _dragExtent {
-    final RenderBox renderBox =
-        _childKey.currentContext!.findRenderObject()! as RenderBox;
-    final double dragHandleHeight = widget.dimensions.dragHandleHeight ?? 0.0;
-    final double minContentHeight = widget.dimensions.minContentHeight ?? 0.0;
-    final double minHeight = math.max(
-      renderBox.constraints.minHeight,
-      dragHandleHeight + minContentHeight,
-    );
-    return math.max(0.0, renderBox.constraints.maxHeight - minHeight);
-  }
 
   void _handleDragStart(final DragStartDetails details) {
     _dragHandleWidgetState.value =
@@ -223,7 +210,8 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
     if (_dismissUnderway) {
       return;
     }
-    final double unitDelta = details.primaryDelta! / _dragExtent;
+    final double unitDelta =
+        details.primaryDelta! / widget.dimensions.dragExtent!;
     if ((widget.animationController.value == 0.0 && unitDelta > 0.0) ||
         (widget.animationController.value == 1.0 && unitDelta < 0.0)) {
       return;
@@ -251,7 +239,7 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
     bool isClosing = false;
     if (details.velocity.pixelsPerSecond.dy > _minFlingVelocity) {
       final double flingVelocity =
-          -details.velocity.pixelsPerSecond.dy / _dragExtent;
+          -details.velocity.pixelsPerSecond.dy / widget.dimensions.dragExtent!;
       if (widget.animationController.value > 0.0) {
         widget.animationController.fling(velocity: flingVelocity);
       }
@@ -347,15 +335,6 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
           child: dragHandle,
         );
       }
-
-      dragHandle = HeightObserver(
-        onHeightChanged: (final double height) {
-          widget.dimensions._dragHandleHeight = height;
-        },
-        child: dragHandle,
-      );
-    } else {
-      widget.dimensions._dragHandleHeight = null;
     }
 
     Widget bottomSheet = Material(
@@ -366,7 +345,6 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
       shape: shape,
       clipBehavior: clipBehavior,
       child: _SheetContainer(
-        key: _childKey,
         dimensions: widget.dimensions,
         animation: widget.animationController,
         curve: widget.curve,
@@ -399,21 +377,27 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
 /// Listeners are notified whenever the bottom sheet's layout is marked dirty,
 /// allowing dependent widgets to update their own layouts accordingly.
 class BottomSheetDimensions with ChangeNotifier {
-  /// The height of the drag handle.
+  /// The minimum height of the bottom sheet.
+  ///
+  /// If both [minContentHeight] and [PersistentBottomSheet.constraints] are
+  /// provided, then this is the greater of:
+  ///
+  ///   * [PersistentBottomSheet.constraints].minHeight
+  ///   * [minContentHeight] + drag handle height
   ///
   /// This value is measured by the [PersistentBottomSheet] during the layout
   /// phase.
-  double? get dragHandleHeight => _dragHandleHeight;
-  double? _dragHandleHeight;
+  double? get minHeight => _minHeight;
+  double? _minHeight;
+
+  /// The drag extent of the bottom sheet.
+  ///
+  /// This value is measured by the [PersistentBottomSheet] during the layout
+  /// phase.
+  double? get dragExtent => _dragExtent;
+  double? _dragExtent;
 
   /// The minimum height of the content.
-  ///
-  /// If both [minContentHeight] and [PersistentBottomSheet.constraints] are
-  /// provided, the total minimum height of the [PersistentBottomSheet] is
-  /// the greater of:
-  ///
-  ///   * [PersistentBottomSheet.constraints].minHeight
-  ///   * [minContentHeight] + [dragHandleHeight]
   ///
   /// This property can be hardcoded or measured during the layout phase.
   /// For example, to measure the height of a [NavigationBar] into this
@@ -572,7 +556,6 @@ enum _SheetContainerSlot {
 class _SheetContainer extends SlottedMultiChildRenderObjectWidget<
     _SheetContainerSlot, RenderBox> {
   const _SheetContainer({
-    super.key,
     required this.dimensions,
     required this.animation,
     required this.curve,
@@ -698,6 +681,10 @@ class _RenderSheetContainer extends RenderBox
       (dragHandle?.size.height ?? 0.0) + minContentHeight,
     );
     final double dragExtent = math.max(0.0, constraints.maxHeight - minHeight);
+
+    _dimensions
+      .._minHeight = minHeight
+      .._dragExtent = dragExtent;
 
     size = Size(
       constraints.maxWidth,
