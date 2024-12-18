@@ -377,8 +377,9 @@ class _PersistentBottomSheetState extends State<PersistentBottomSheet> {
 /// A [Listenable] that holds mutable layout properties of a
 /// [PersistentBottomSheet].
 ///
-/// Listeners are notified whenever the bottom sheet's layout is marked dirty,
-/// allowing dependent widgets to update their own layouts accordingly.
+/// [PersistentBottomSheet] notifies listeners of this [Listenable] whenever its
+/// layout is marked dirty, allowing widgets that depend on the sheet's
+/// dimensions to update their own layouts accordingly.
 class BottomSheetDimensions with ChangeNotifier {
   /// The minimum height of the bottom sheet.
   ///
@@ -402,7 +403,10 @@ class BottomSheetDimensions with ChangeNotifier {
 
   /// The minimum height of the content.
   ///
-  /// This property can be hardcoded or measured during the layout phase.
+  /// This property can be assigned a fixed value or dynamically measured during
+  /// the layout phase. When measuring dynamically, the bottom sheet must be
+  /// notified whenever the measured widget is marked as needing layout. This
+  /// can be achieved by calling [BottomSheetDimensions.markNeedsLayout].
   /// For example, to measure the height of a [NavigationBar] into this
   /// property, you can use the [LayoutObserver] widget:
   ///
@@ -419,7 +423,11 @@ class BottomSheetDimensions with ChangeNotifier {
   /// ```
   double? minContentHeight;
 
-  void _markNeedsLayout() => notifyListeners();
+  /// Marks the bottom sheet's and its dependents' layout information as dirty.
+  ///
+  /// This method should be called whenever a dependency of the bottom sheet is
+  /// marked as needing layout.
+  void markNeedsLayout() => notifyListeners();
 }
 
 /// A widget that determines the interactive state of its descendants.
@@ -606,10 +614,14 @@ class _RenderSheetContainer extends RenderBox
     if (_dimensions == value) {
       return;
     }
+    _dimensions.removeListener(super.markNeedsLayout);
     if (attached && _dimensions.minContentHeight != value.minContentHeight) {
       markNeedsLayout();
     }
     _dimensions = value;
+    if (attached) {
+      _dimensions.addListener(super.markNeedsLayout);
+    }
   }
 
   Animation<double> get animation => _animation;
@@ -631,6 +643,7 @@ class _RenderSheetContainer extends RenderBox
   @override
   void attach(final PipelineOwner owner) {
     super.attach(owner);
+    _dimensions.addListener(super.markNeedsLayout);
     _animation.addListener(markNeedsLayout);
   }
 
@@ -638,6 +651,7 @@ class _RenderSheetContainer extends RenderBox
   void detach() {
     super.detach();
     _animation.removeListener(markNeedsLayout);
+    _dimensions.removeListener(super.markNeedsLayout);
   }
 
   @override
@@ -726,7 +740,7 @@ class _RenderSheetContainer extends RenderBox
   @override
   void markNeedsLayout() {
     super.markNeedsLayout();
-    _dimensions._markNeedsLayout();
+    _dimensions.markNeedsLayout();
   }
 }
 
